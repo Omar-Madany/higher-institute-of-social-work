@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net (Default Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // 1. Visitor Stats: Anyone can read, anyone can write for counters
+    match /visitor_stats/{docId} {
+      allow read, write: if true;
+    }
+
+    // 2. Active Sessions: Anyone can read/write for live user count
+    match /active_sessions/{sessionId} {
+      allow read, write: if true;
+    }
+
+    // 3. News Articles: Public read, anyone can write/manage
+    match /news_articles/{articleId} {
+      allow read, write: if true;
+    }
+
+    // 4. Admission Applications: Public submit, anyone can read/write/manage
+    match /admission_applications/{applicationId} {
+      allow read, write: if true;
+    }
+
+    // 5. Exam Schedules: Public read, anyone can write/manage
+    match /exam_schedules/{scheduleId} {
+      allow read, write: if true;
+    }
+
+    // 6. User Profiles: Anyone can read/write/manage profiles for demo and authenticated users
+    match /user_profiles/{userId} {
+      allow read, write: if true;
+    }
+
+    // 7. Student Grades: Anyone can read/write/manage grades
+    match /student_grades/{gradeId} {
+      allow read, write: if true;
+    }
+
+    // 8. Student Payments: Anyone can read/write/manage payments
+    match /student_payments/{paymentId} {
+      allow read, write: if true;
+    }
+
+    // 9. Course Materials: Anyone can read/write/manage lectures
+    match /course_materials/{materialId} {
+      allow read, write: if true;
+    }
+
+    // 10. Student Results By Seat Number: Anyone can read/write/manage results
+    match /student_results_by_seat/{resultId} {
+      allow read, write: if true;
+    }
+  }
+}
