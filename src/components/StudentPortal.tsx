@@ -18,7 +18,7 @@ import {
   User as FirebaseUser
 } from "firebase/auth";
 import { db, auth } from "../lib/firebase";
-import { handleFirestoreError, OperationType } from "../lib/firebase-error";
+import { handleFirestoreError, OperationType, isQuotaError } from "../lib/firebase-error";
 import { SEEDED_RESULTS } from "../data";
 import AdminDashboard from "./AdminDashboard";
 
@@ -227,8 +227,12 @@ export default function StudentPortal() {
           }
           setAuthLoading(false);
           return () => {};
-        } catch (e) {
-          console.error("Failed to restore simulated session:", e);
+        } catch (e: any) {
+          if (isQuotaError(e)) {
+            console.warn("Failed to restore simulated session (Quota Exceeded):", e);
+          } else {
+            console.error("Failed to restore simulated session:", e);
+          }
           handleFirestoreError(e, OperationType.GET, "user_profiles");
         }
       }
@@ -253,8 +257,12 @@ export default function StudentPortal() {
               };
               setUserProfile(fallbackProfile);
             }
-          } catch (error) {
-            console.error("Error getting user profile:", error);
+          } catch (error: any) {
+            if (isQuotaError(error)) {
+              console.warn("Error getting user profile (Quota Exceeded):", error);
+            } else {
+              console.error("Error getting user profile:", error);
+            }
             handleFirestoreError(error, OperationType.GET, "user_profiles");
           }
         } else {
@@ -602,7 +610,11 @@ export default function StudentPortal() {
       setAdmHighSchool("");
       setAdmNotes("");
     } catch (err: any) {
-      console.error("Error submitting admission:", err);
+      if (isQuotaError(err)) {
+        console.warn("Error submitting admission (Quota Exceeded):", err);
+      } else {
+        console.error("Error submitting admission:", err);
+      }
       setAuthError(isAr ? "حدث خطأ أثناء إرسال طلب التقديم. يرجى المحاولة مرة أخرى." : "Error submitting admissions form. Please try again.");
       handleFirestoreError(err, OperationType.CREATE, "admission_applications");
     } finally {
@@ -632,8 +644,8 @@ export default function StudentPortal() {
       isSpecial?: boolean;
     }[];
   }> = {
-    "202601": {
-      seatNumber: "202601",
+    "5001": {
+      seatNumber: "5001",
       fullName: "أحمد محمد محمود علي",
       academicYear: "الفرقة الأولى",
       department: "شعبة الخدمة الاجتماعية",
@@ -661,8 +673,8 @@ export default function StudentPortal() {
         { subject: "قضايا مجتمعية", maxScore: 100, passingScore: 50, scoreText: "ل" }
       ]
     },
-    "202602": {
-      seatNumber: "202602",
+    "5002": {
+      seatNumber: "5002",
       fullName: "سارة عبد الرحمن حسن سليمان",
       academicYear: "الفرقة الأولى",
       department: "شعبة الخدمة الاجتماعية",
@@ -690,8 +702,8 @@ export default function StudentPortal() {
         { subject: "قضايا مجتمعية", maxScore: 100, passingScore: 50, scoreText: "ج" }
       ]
     },
-    "202603": {
-      seatNumber: "202603",
+    "5003": {
+      seatNumber: "5003",
       fullName: "محمود إبراهيم أحمد خلف",
       academicYear: "الفرقة الأولى",
       department: "شعبة الخدمة الاجتماعية",
@@ -734,6 +746,19 @@ export default function StudentPortal() {
 
     setResultSearchLoading(true);
     try {
+      if (sessionStorage.getItem("aswan_inst_firestore_quota_exceeded") === "true") {
+        if (DEFAULT_RESULTS_BY_SEAT[queryStr]) {
+          setResultSearchResult(DEFAULT_RESULTS_BY_SEAT[queryStr]);
+        } else {
+          setResultSearchError(isAr 
+            ? "عذراً، رقم الجلوس هذا غير مسجل حالياً في النتائج المعتمدة. يرجى مراجعة الرقم أو المحاولة لاحقاً." 
+            : "This seat number was not found in the approved results database. Please check and try again."
+          );
+        }
+        setResultSearchLoading(false);
+        return;
+      }
+
       // 1. الاستعلام من قاعدة بيانات Firestore أولاً لضمان الديناميكية عند رفع الإكسيل
       const q = query(collection(db, "student_results_by_seat"), where("seatNumber", "==", queryStr));
       const querySnapshot = await getDocs(q);
@@ -753,12 +778,27 @@ export default function StudentPortal() {
         }
       }
     } catch (err: any) {
-      console.error("Error looking up seat number:", err);
-      // Fallback to local demo in case of network issue
-      if (DEFAULT_RESULTS_BY_SEAT[queryStr]) {
-        setResultSearchResult(DEFAULT_RESULTS_BY_SEAT[queryStr]);
+      if (isQuotaError(err)) {
+        console.warn("Error looking up seat number (Quota Exceeded):", err);
+        try {
+          sessionStorage.setItem("aswan_inst_firestore_quota_exceeded", "true");
+        } catch (e) {}
+        if (DEFAULT_RESULTS_BY_SEAT[queryStr]) {
+          setResultSearchResult(DEFAULT_RESULTS_BY_SEAT[queryStr]);
+        } else {
+          setResultSearchError(isAr 
+            ? "عذراً، رقم الجلوس هذا غير مسجل حالياً في النتائج المعتمدة. يرجى مراجعة الرقم أو المحاولة لاحقاً." 
+            : "This seat number was not found in the approved results database. Please check and try again."
+          );
+        }
       } else {
-        setResultSearchError(isAr ? "حدث خطأ أثناء الاتصال بالخادم." : "Error connecting to server.");
+        console.error("Error looking up seat number:", err);
+        // Fallback to local demo in case of network issue
+        if (DEFAULT_RESULTS_BY_SEAT[queryStr]) {
+          setResultSearchResult(DEFAULT_RESULTS_BY_SEAT[queryStr]);
+        } else {
+          setResultSearchError(isAr ? "حدث خطأ أثناء الاتصال بالخادم." : "Error connecting to server.");
+        }
       }
     } finally {
       setResultSearchLoading(false);
@@ -779,6 +819,15 @@ export default function StudentPortal() {
 
     setLookupLoading(true);
     try {
+      if (sessionStorage.getItem("aswan_inst_firestore_quota_exceeded") === "true") {
+        setLookupError(isAr 
+          ? "الخدمة تواجه ضغطاً كبيراً حالياً، يرجى المحاولة لاحقاً." 
+          : "System is under high load right now, please try again later."
+        );
+        setLookupLoading(false);
+        return;
+      }
+
       // Query by tracking appId OR nationalId
       let q = query(collection(db, "admission_applications"), where("appId", "==", lookupAppId.trim()));
       let querySnapshot = await getDocs(q);
@@ -798,8 +847,19 @@ export default function StudentPortal() {
         );
       }
     } catch (err: any) {
-      console.error("Error looking up admission:", err);
-      setLookupError(isAr ? "حدث خطأ أثناء الاتصال بالنظام." : "Error fetching from network.");
+      if (isQuotaError(err)) {
+        console.warn("Error looking up admission (Quota Exceeded):", err);
+        try {
+          sessionStorage.setItem("aswan_inst_firestore_quota_exceeded", "true");
+        } catch (e) {}
+        setLookupError(isAr 
+          ? "الخدمة تواجه ضغطاً كبيراً حالياً، يرجى المحاولة لاحقاً." 
+          : "System is under high load right now, please try again later."
+        );
+      } else {
+        console.error("Error looking up admission:", err);
+        setLookupError(isAr ? "حدث خطأ أثناء الاتصال بالنظام." : "Error fetching from network.");
+      }
     } finally {
       setLookupLoading(false);
     }
@@ -891,8 +951,12 @@ export default function StudentPortal() {
 
     try {
       await setDoc(doc(db, "user_profiles", simulatedUid), demoProfile);
-    } catch (err) {
-      console.error("Firestore setDoc failed during demo fallback:", err);
+    } catch (err: any) {
+      if (isQuotaError(err)) {
+        console.warn("Firestore setDoc failed during demo fallback (Quota Exceeded):", err);
+      } else {
+        console.error("Firestore setDoc failed during demo fallback:", err);
+      }
     }
 
     // Seed student data and extra students
@@ -1092,8 +1156,12 @@ export default function StudentPortal() {
           createdAt: new Date().toISOString()
         });
       }
-    } catch (err) {
-      console.error("Error seeding student data:", err);
+    } catch (err: any) {
+      if (isQuotaError(err)) {
+        console.warn("Seeding student data skipped (Quota Exceeded):", err);
+      } else {
+        console.error("Error seeding student data:", err);
+      }
     }
 
     const simUser = {
@@ -1663,8 +1731,8 @@ export default function StudentPortal() {
                         </h3>
                         <p className="text-[11px] sm:text-xs text-slate-400 font-semibold leading-relaxed max-w-md mx-auto">
                           {isAr 
-                            ? "يرجى كتابة رقم الجلوس المكون من 6 أرقام بشكل صحيح ومطابق لرقمك الأكاديمي لعرض بيان درجات المعهد المعتمد بالكامل."
-                            : "Please enter your official 6-digit seat number exactly to load your fully verified, official university transcript."}
+                            ? "يرجى كتابة رقم الجلوس المكون من 4 أرقام بشكل صحيح ومطابق لرقمك الأكاديمي لعرض بيان درجات المعهد المعتمد بالكامل."
+                            : "Please enter your official 4-digit seat number exactly to load your fully verified, official university transcript."}
                         </p>
                       </div>
 
@@ -1679,14 +1747,14 @@ export default function StudentPortal() {
                             required
                             value={seatNumber}
                             onChange={(e) => setSeatNumber(e.target.value)}
-                            placeholder={isAr ? "مثال: 202601" : "e.g. 202601"}
+                            placeholder={isAr ? "رقم الجلوس" : "Seat Number"}
                             className="w-full bg-slate-950 border-2 border-slate-700 hover:border-slate-500 focus:border-emerald-500 rounded-xl px-4 py-2.5 sm:py-3 text-lg sm:text-xl font-black text-center text-white focus:outline-none transition-all duration-300 font-mono tracking-widest focus:ring-4 focus:ring-emerald-500/20"
                           />
                         </div>
                         <p className="text-[10px] sm:text-[11px] text-slate-400 font-bold text-center leading-relaxed">
                           {isAr 
-                            ? "رقم الجلوس موحد ومكون من 6 أرقام مسجل ومعتمد بكنترول المعهد العالي للخدمة الاجتماعية بأسوان لعام ٢٠٢٦م."
-                            : "Your seat number consists of 6 digits registered in the database of Aswan Institute."}
+                            ? "رقم الجلوس موحد ومكون من 4 أرقام مسجل ومعتمد بكنترول المعهد العالي للخدمة الاجتماعية بأسوان لعام ٢٠٢٦م."
+                            : "Your seat number consists of 4 digits registered in the database of Aswan Institute."}
                         </p>
                       </div>
 
@@ -1710,18 +1778,6 @@ export default function StudentPortal() {
                           )}
                           <span>{isAr ? "عرض النتيجة والدرجات بالتفصيل 🔍" : "View Detailed Result & Grades 🔍"}</span>
                         </button>
-                      </div>
-
-                      {/* أرقام فحص تجريبية مصممة بشكل رائع ومميز */}
-                      <div className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-3 text-center space-y-2 max-w-md mx-auto">
-                        <span className="text-[10px] sm:text-xs font-black text-emerald-400 block">
-                          {isAr ? "📌 للتجربة الفورية السريعة، اضغط على أحد الأرقام التالية:" : "📌 For instant preview, click one of the demo seat numbers:"}
-                        </span>
-                        <div className="flex justify-center flex-wrap gap-2 text-xs font-mono font-bold text-slate-300">
-                          <button type="button" onClick={() => setSeatNumber("202601")} className="px-3 py-1.5 bg-slate-950 hover:bg-slate-800 hover:text-emerald-400 transition-all border border-slate-800 hover:border-emerald-500 rounded-lg font-mono text-xs sm:text-sm shadow-sm">202601</button>
-                          <button type="button" onClick={() => setSeatNumber("202602")} className="px-3 py-1.5 bg-slate-950 hover:bg-slate-800 hover:text-emerald-400 transition-all border border-slate-800 hover:border-emerald-500 rounded-lg font-mono text-xs sm:text-sm shadow-sm">202602</button>
-                          <button type="button" onClick={() => setSeatNumber("202603")} className="px-3 py-1.5 bg-slate-950 hover:bg-slate-800 hover:text-emerald-400 transition-all border border-slate-800 hover:border-emerald-500 rounded-lg font-mono text-xs sm:text-sm shadow-sm">202603</button>
-                        </div>
                       </div>
                     </form>
                   ) : (
